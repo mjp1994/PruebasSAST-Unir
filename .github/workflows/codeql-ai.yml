@@ -1,10 +1,6 @@
 name: "CodeQL Analysis for AI"
 
 on:
-  push:
-    branches: [ "main", "master" ]
-  pull_request:
-    branches: [ "main", "master" ]
   workflow_dispatch: # 允许手动点击按钮触发
 
 jobs:
@@ -28,20 +24,21 @@ jobs:
 
       # 2. 初始化 CodeQL
       - name: Initialize CodeQL
-        uses: github/codeql-action/init@v3
+        uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
           # 推荐：使用 security-and-quality 套件，不仅查漏洞，还查代码质量
           # 这能给 AI 提供更多优化建议的素材
           queries: security-and-quality
+          config-file: ./.github/codeql/codeql-config.yml
 
       # 3. 自动构建 (对于 TS/JS 主要是识别依赖)
       - name: Autobuild
-        uses: github/codeql-action/autobuild@v3
+        uses: github/codeql-action/autobuild@v4
 
       # 4. 执行分析 (核心修改部分)
       - name: Perform CodeQL Analysis
-        uses: github/codeql-action/analyze@v3
+        uses: github/codeql-action/analyze@v4
         with:
           category: "/language:${{ matrix.language }}"
           # -------------------------------------------------------
@@ -49,7 +46,6 @@ jobs:
           # -------------------------------------------------------
           upload: false           # 🚫 核心：禁止上传到 GitHub Security Tab
           output: sarif-results   # 📂 指定结果输出到一个临时文件夹
-          add-snippets: true      # 🤖 AI 优化：在 JSON 中包含漏洞周围的代码片段
           # -------------------------------------------------------
 
       # 5. 上传结果供 AI 下载
@@ -58,4 +54,4 @@ jobs:
         with:
           name: codeql-sarif-json
           path: sarif-results/*.sarif
-          retention-days: 3       # 优化：结果只保留3天，节省空间
+          retention-days: 3       # 优化：结果只保留 3 天，节省空间
