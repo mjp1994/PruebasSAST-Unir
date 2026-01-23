@@ -1,0 +1,61 @@
+name: "CodeQL Analysis for AI"
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  pull_request:
+    branches: [ "main", "master" ]
+  workflow_dispatch: # 允许手动点击按钮触发
+
+jobs:
+  analyze:
+    name: Analyze TypeScript
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # ⚠️ 注意：这里故意移除了 security-events: write 权限
+      # 因为我们不上传到 Security Tab，所以不需要它。
+
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [ 'javascript' ] # TypeScript 包含在 javascript 分析器中
+
+    steps:
+      # 1. 检出代码
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. 初始化 CodeQL
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v3
+        with:
+          languages: ${{ matrix.language }}
+          # 推荐：使用 security-and-quality 套件，不仅查漏洞，还查代码质量
+          # 这能给 AI 提供更多优化建议的素材
+          queries: security-and-quality
+
+      # 3. 自动构建 (对于 TS/JS 主要是识别依赖)
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@v3
+
+      # 4. 执行分析 (核心修改部分)
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v3
+        with:
+          category: "/language:${{ matrix.language }}"
+          # -------------------------------------------------------
+          # 👇 关键配置：专为 AI 消费和私有仓库优化
+          # -------------------------------------------------------
+          upload: false           # 🚫 核心：禁止上传到 GitHub Security Tab
+          output: sarif-results   # 📂 指定结果输出到一个临时文件夹
+          add-snippets: true      # 🤖 AI 优化：在 JSON 中包含漏洞周围的代码片段
+          # -------------------------------------------------------
+
+      # 5. 上传结果供 AI 下载
+      - name: Upload SARIF as Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeql-sarif-json
+          path: sarif-results/*.sarif
+          retention-days: 3       # 优化：结果只保留3天，节省空间
