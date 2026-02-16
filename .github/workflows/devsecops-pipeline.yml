@@ -2,13 +2,9 @@ name: DevSecOps CI/CD Pipeline
 
 on:
   push:
-    branches:
-      - master
-      - develop
+    branches: [master, develop]
   pull_request:
-    branches:
-      - master
-      - develop
+    branches: [master, develop]
 
 env:
   NODE_VERSION: '20.x'
@@ -18,97 +14,73 @@ jobs:
   build-and-test:
     name: Build & Test
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: ${{ env.NODE_VERSION }}
 
-      - name: Install dependencies
-        run: npm install
+      - run: npm install
 
-      - name: Run linting
+      - name: Lint
         run: npm run lint
         continue-on-error: true
 
-      - name: Run unit tests
+      - name: Unit tests
         run: npm test
         continue-on-error: true
 
-      - name: Build application
-        run: npm run build:server
+      - run: npm run build:server
 
-      - name: Build Docker image
+      - name: Build & save Docker image
         run: |
           docker build -t ${{ env.DOCKER_IMAGE_NAME }}:${{ github.sha }} .
           docker save ${{ env.DOCKER_IMAGE_NAME }}:${{ github.sha }} -o juice-shop-image.tar
 
-      - name: Upload Docker image artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: docker-image
           path: juice-shop-image.tar
           retention-days: 1
 
   sast:
-    name: SAST - Static Application Security Testing
+    name: SAST
     runs-on: ubuntu-latest
     needs: build-and-test
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+      - uses: actions/checkout@v4
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-
-      - name: Set up Python for Semgrep
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.x'
 
-      - name: Install Semgrep
-        run: pip install semgrep
-
-      - name: Run Semgrep scan
+      - name: Run Semgrep
         run: |
+          pip install semgrep
           semgrep --config auto --json --output semgrep-results.json || true
         continue-on-error: true
 
-      - name: Upload SAST artifacts
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: sast-results
-          path: |
-            semgrep-results.json
+          path: semgrep-results.json
           retention-days: 7
 
   sca:
-    name: SCA - Software Composition Analysis
+    name: SCA
     runs-on: ubuntu-latest
     needs: build-and-test
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Download Docker image
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: docker-image
 
-      - name: Load Docker image
-        run: docker load -i juice-shop-image.tar
+      - run: docker load -i juice-shop-image.tar
 
-      - name: Run Trivy filesystem scan
+      - name: Trivy filesystem scan
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'fs'
@@ -117,7 +89,7 @@ jobs:
           output: 'trivy-fs-results.json'
         continue-on-error: true
 
-      - name: Run Trivy Docker image scan
+      - name: Trivy image scan
         uses: aquasecurity/trivy-action@master
         with:
           scan-type: 'image'
@@ -126,30 +98,26 @@ jobs:
           output: 'trivy-image-results.json'
         continue-on-error: true
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
 
-      - name: Install dependencies for Dependency-Check
-        run: npm install --package-lock-only --ignore-scripts
+      - name: Generate lock files for Dependency-Check
+        run: |
+          npm install --package-lock-only --ignore-scripts
+          cd frontend && npm install --package-lock-only --ignore-scripts
 
-      - name: Install frontend dependencies for Dependency-Check
-        run: cd frontend && npm install --package-lock-only --ignore-scripts
-
-      - name: Run OWASP Dependency-Check
+      - name: OWASP Dependency-Check
         uses: dependency-check/Dependency-Check_Action@main
         with:
           project: 'juice-shop'
           path: '.'
           format: 'XML'
           out: '.'
-          args: >-
-            --exclude "**/test/files/**"
+          args: '--exclude "**/test/files/**"'
         continue-on-error: true
 
-      - name: Upload SCA artifacts
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: sca-results
           path: |
@@ -159,113 +127,76 @@ jobs:
           retention-days: 7
 
   dast:
-    name: DAST - Dynamic Application Security Testing
+    name: DAST
     runs-on: ubuntu-latest
     needs: build-and-test
-
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-    - name: Download Docker image
-      uses: actions/download-artifact@v4
-      with:
-        name: docker-image
+      - uses: actions/download-artifact@v4
+        with:
+          name: docker-image
 
-    - name: Load Docker image
-      run: docker load -i juice-shop-image.tar
+      - run: docker load -i juice-shop-image.tar
 
-    - name: Start Juice Shop container
-      run: |
-        docker run -d --name juice-shop -p 3000:3000 $DOCKER_IMAGE_NAME:${{ github.sha }}
-        echo "Waiting for application to start..."
-        for i in {1..30}; do
-          if curl -f http://localhost:3000 > /dev/null 2>&1; then
-            echo "Application is ready!"
-            break
-          fi
-          if [ $i -eq 30 ]; then
-            echo "Application failed to start"
-            exit 1
-          fi
-          sleep 5
-        done
+      - name: Start Juice Shop
+        run: |
+          docker run -d --name juice-shop -p 3000:3000 $DOCKER_IMAGE_NAME:${{ github.sha }}
+          for i in {1..30}; do
+            curl -sf http://localhost:3000 > /dev/null && break
+            [ $i -eq 30 ] && exit 1
+            sleep 5
+          done
 
-    - name: Run OWASP ZAP Baseline Scan
-      uses: zaproxy/action-baseline@v0.14.0
-      with:
-        target: 'http://localhost:3000'
-        cmd_options: '-j -x report_xml.xml'
-        allow_issue_writing: false
-      continue-on-error: true
+      - name: OWASP ZAP Baseline Scan
+        uses: zaproxy/action-baseline@v0.14.0
+        with:
+          target: 'http://localhost:3000'
+          cmd_options: '-j -x report_xml.xml'
+          allow_issue_writing: false
+        continue-on-error: true
 
-    - name: Stop Juice Shop container
-      if: always()
-      run: docker stop juice-shop && docker rm juice-shop
+      - name: Stop Juice Shop
+        if: always()
+        run: docker stop juice-shop && docker rm juice-shop
 
-    - name: Upload DAST artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: dast-results
-        path: |
-          report_html.html
-          report_json.json
-          report_xml.xml
-        retention-days: 7
-
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dast-results
+          path: |
+            report_html.html
+            report_json.json
+            report_xml.xml
+          retention-days: 7
 
   defectdojo-upload:
     name: DefectDojo Upload
     runs-on: ubuntu-latest
     needs: [sast, sca, dast]
     if: always()
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Download SAST artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: sast-results
         continue-on-error: true
 
-      - name: Download SCA artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: sca-results
         continue-on-error: true
 
-      - name: Download DAST artifacts
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: dast-results
         continue-on-error: true
 
-      - name: List downloaded artifacts
-        run: |
-          echo "=== All files in workspace ==="
-          ls -la
-          echo "=== ZAP report check ==="
-          if [ -f report_json.json ]; then
-            echo "report_json.json exists ($(wc -c < report_json.json) bytes)"
-            head -c 200 report_json.json
-            echo
-          else
-            echo "report_json.json NOT FOUND"
-          fi
-          echo "=== All JSON files ==="
-          find . -maxdepth 1 -name '*.json' -exec ls -la {} \;
-
-      - name: Install jq
-        run: sudo apt-get update && sudo apt-get install -y jq
-
-      - name: Run DefectDojo upload script
+      - name: Upload to DefectDojo
         env:
           DEFECTDOJO_URL: ${{ secrets.DEFECTDOJO_URL }}
           DEFECTDOJO_API_TOKEN: ${{ secrets.DEFECTDOJO_API_TOKEN }}
           PRODUCT_NAME: "OWASP Juice Shop"
-          PRODUCT_DESCRIPTION: "OWASP Juice Shop - Automated DevSecOps Pipeline"
           ENGAGEMENT_NAME: "CI/CD Run - ${{ github.run_id }}"
           BUILD_ID: "${{ github.run_id }}"
           COMMIT_HASH: "${{ github.sha }}"
@@ -276,13 +207,9 @@ jobs:
           .github/scripts/defectdojo-upload.sh
         continue-on-error: true
 
-      - name: Upload summary
+      - name: Summary
         run: |
           echo "## DefectDojo Integration Summary" >> $GITHUB_STEP_SUMMARY
-          echo "- **Product**: OWASP Juice Shop" >> $GITHUB_STEP_SUMMARY
           echo "- **Engagement**: CI/CD Run - ${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Commit**: \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
           echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-          if [ -n "${{ secrets.DEFECTDOJO_URL }}" ]; then
-            echo "- **View Results**: ${{ secrets.DEFECTDOJO_URL }}" >> $GITHUB_STEP_SUMMARY
-          fi
