@@ -85,6 +85,7 @@ jobs:
         with:
           scan-type: "fs"
           scan-ref: "."
+          scanners: "vuln"
           format: "json"
           output: "trivy-fs-results.json"
         continue-on-error: true
@@ -94,6 +95,7 @@ jobs:
         with:
           scan-type: "image"
           image-ref: "${{ env.DOCKER_IMAGE_NAME }}:${{ github.sha }}"
+          scanners: "vuln"
           format: "json"
           output: "trivy-image-results.json"
         continue-on-error: true
