@@ -65,12 +65,18 @@ jobs:
         run: curl -o wizcli https://downloads.wiz.io/v1/wizcli/latest/wizcli-linux-amd64 && chmod +x wizcli
 
 
-      - name: Run wiz-cli docker image scan
+      - name: Run wiz-cli SAST scan
         env:
           WIZ_CLIENT_ID: ${{ secrets.WIZ_CLIENT_ID }}
           WIZ_CLIENT_SECRET: ${{ secrets.WIZ_CLIENT_SECRET }}
         run: ./wizcli scan dir . --policies "$POLICY"
-        # run: ./wizcli scan container-image ${{ vars.ACR_PATH }}/${{ github.event.repository.name }}/${{ github.event.repository.name }}:${{ env.COMMIT_SHORT_SHA }} --policies "$POLICY"
+     
+
+      - name: Run wiz-cli container image scan
+        env:
+          WIZ_CLIENT_ID: ${{ secrets.WIZ_CLIENT_ID }}
+          WIZ_CLIENT_SECRET: ${{ secrets.WIZ_CLIENT_SECRET }}
+        run: ./wizcli scan container-image ${{ vars.ACR_PATH }}/${{ github.event.repository.name }}/${{ github.event.repository.name }}:${{ env.COMMIT_SHORT_SHA }} --policies "$POLICY"
 
 
       # - name: Authenticate to Wiz
