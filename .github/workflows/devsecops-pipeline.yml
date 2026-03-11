@@ -20,8 +20,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
-          # Caches ~/.npm across runs. Cache key is based on the lockfile so
-          # it invalidates automatically whenever dependencies change.
           cache: "npm"
 
       - run: npm install
@@ -36,10 +34,30 @@ jobs:
 
       - run: npm run build:server
 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: docker-buildx-${{ hashFiles('Dockerfile', 'package.json', 'frontend/package.json') }}
+          restore-keys: docker-buildx-
+
       - name: Build & save Docker image
         run: |
-          docker build -t ${{ env.DOCKER_IMAGE_NAME }}:${{ github.sha }} .
+          docker buildx build \
+            --cache-from type=local,src=/tmp/.buildx-cache \
+            --cache-to type=local,dest=/tmp/.buildx-cache-new,mode=max \
+            --load \
+            -t ${{ env.DOCKER_IMAGE_NAME }}:${{ github.sha }} .
           docker save ${{ env.DOCKER_IMAGE_NAME }}:${{ github.sha }} -o juice-shop-image.tar
+
+      - name: Rotate Docker cache
+        if: always()
+        run: |
+          rm -rf /tmp/.buildx-cache
+          mv /tmp/.buildx-cache-new /tmp/.buildx-cache || true
 
       - uses: actions/upload-artifact@v4
         with:
@@ -57,8 +75,6 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.x"
-          # Caches the pip download cache. Key includes the semgrep version
-          # string so upgrading semgrep automatically busts the cache.
           cache: "pip"
 
       - name: Run Semgrep
@@ -86,21 +102,12 @@ jobs:
 
       - run: docker load -i juice-shop-image.tar
 
-      # Trivy downloads its vulnerability DB on every run (~30-50 MB).
-      # Caching it under a date-based key means it refreshes once per day
-      # rather than on every push, which is a meaningful time saving.
-      - name: Cache Trivy vulnerability DB
+      - name: Cache Trivy DB
         uses: actions/cache@v4
         with:
           path: ~/.cache/trivy
-          key: trivy-db-${{ runner.os }}-${{ steps.date.outputs.date }}
-          restore-keys: |
-            trivy-db-${{ runner.os }}-
-        id: trivy-cache
-
-      - name: Get current date (for Trivy cache key)
-        id: date
-        run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+          key: trivy-db-${{ github.run_id }}
+          restore-keys: trivy-db-
 
       - name: Trivy filesystem scan
         uses: aquasecurity/trivy-action@master
@@ -110,8 +117,6 @@ jobs:
           scanners: "vuln"
           format: "json"
           output: "trivy-fs-results.json"
-          # Tell Trivy to use (and populate) the cache directory above.
-          cache-dir: ~/.cache/trivy
         continue-on-error: true
 
       - name: Trivy image scan
@@ -122,7 +127,6 @@ jobs:
           scanners: "vuln"
           format: "json"
           output: "trivy-image-results.json"
-          cache-dir: ~/.cache/trivy
         continue-on-error: true
 
       - uses: actions/setup-node@v4
@@ -135,23 +139,12 @@ jobs:
           npm install --package-lock-only --ignore-scripts
           cd frontend && npm install --package-lock-only --ignore-scripts
 
-      # The Dependency-Check NVD database is large (~300-500 MB) and is
-      # re-downloaded from scratch on every run without caching. A daily
-      # cache key keeps it fresh for security purposes while avoiding the
-      # full download on every push. The restore-keys fallback means a
-      # slightly stale DB is used if today's cache hasn't been populated yet
-      # (e.g. first run of the day), which is acceptable for a CI pipeline.
-      - name: Cache OWASP Dependency-Check DB
+      - name: Cache Dependency-Check data
         uses: actions/cache@v4
         with:
-          path: ~/.dependency-check/data
-          key: dep-check-db-${{ runner.os }}-${{ steps.depcheck-date.outputs.date }}
-          restore-keys: |
-            dep-check-db-${{ runner.os }}-
-
-      - name: Get current date (for Dependency-Check cache key)
-        id: depcheck-date
-        run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+          path: ${{ github.workspace }}/dependency-check-data
+          key: depcheck-data-${{ github.run_id }}
+          restore-keys: depcheck-data-
 
       - name: OWASP Dependency-Check
         uses: dependency-check/Dependency-Check_Action@main
@@ -160,7 +153,7 @@ jobs:
           path: "."
           format: "XML"
           out: "."
-          args: '--exclude "**/test/files/**" --data ~/.dependency-check/data'
+          args: '--exclude "**/test/files/**" --data "${{ github.workspace }}/dependency-check-data"'
         continue-on-error: true
 
       - uses: actions/upload-artifact@v4
