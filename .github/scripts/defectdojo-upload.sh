@@ -128,44 +128,23 @@ find_or_create_engagement() {
 }
 
 # ---------------------------------------------------------------------------
-# find_existing_test: looks up a test by engagement + scan_type + filename title.
+# upload_scan: uploads a scan file using ONLY the reimport-scan endpoint.
 #
-# Filtering by title (set to the scan filename on first import) ensures that
-# two scans sharing the same scan_type — e.g. "trivy-fs-results.json" and
-# "trivy-image-results.json" are both "Trivy Scan" — map to distinct tests
-# and are never collapsed into one another.
+# The reimport endpoint handles everything:
+#   - If a test matching engagement + scan_type + test_title already exists,
+#     it updates that test in-place (true reimport, Reimports counter goes up).
+#   - If no matching test exists, it creates one automatically.
+#   - auto_create_context=true means it will also create the engagement or
+#     product on the fly if needed (safety net).
 #
-# Returns the numeric test ID on stdout, or empty string if not found.
-# On API failure returns empty so the caller falls back to a fresh import.
-# ---------------------------------------------------------------------------
-find_existing_test() {
-    local engagement_id=$1 scan_type=$2 scan_file=$3
-
-    local encoded_type encoded_title response count
-    encoded_type=$(echo "${scan_type}" | jq -sRr @uri)
-    encoded_title=$(basename "${scan_file}" | jq -sRr @uri)
-
-    response=$(api_request "GET" \
-        "tests/?engagement=${engagement_id}&scan_type=${encoded_type}&title=${encoded_title}" \
-        "") || return 0
-
-    count=$(echo "${response}" | jq -r '.count // 0')
-    if [ "${count}" -gt 0 ]; then
-        echo "${response}" | jq -r '.results[0].id'
-    fi
-}
-
-# ---------------------------------------------------------------------------
-# upload_scan: uploads a scan file via multipart/form-data.
-# Uses raw curl (not api_request) because the import endpoints require
-# multipart form fields rather than a JSON body.
+# test_title is set to the scan filename. This is the critical field that
+# separates tests with the same scan_type — e.g. "trivy-fs-results.json"
+# and "trivy-image-results.json" are both "Trivy Scan" but have different
+# titles, so DefectDojo keeps them as two distinct, stable test objects.
 #
-# Strategy:
-#   1. Look up an existing test by engagement + scan_type + filename title.
-#   2. If found, call reimport-scan with the explicit test ID — unambiguous,
-#      guaranteed to update the correct test in-place, no duplicates possible.
-#   3. If not found, call import-scan to create the test for the first time,
-#      recording the filename as the title so step 1 finds it on all future runs.
+# We pass product_name and engagement_name (not IDs) so DefectDojo performs
+# the test lookup by name context, which is what enables the title-based
+# matching to work correctly.
 # ---------------------------------------------------------------------------
 upload_scan() {
     local engagement_id=$1 scan_file=$2 scan_type=$3
@@ -184,72 +163,37 @@ upload_scan() {
         return 0
     fi
 
-    local scan_date response http_code body
+    local scan_date test_title response http_code body
     scan_date=$(date +%Y-%m-%d)
-
-    # Use the filename as a stable, unique title per scan file.
-    local test_title
+    # Use the filename as a stable, unique title so DefectDojo can
+    # distinguish tests that share the same scan_type (e.g. two Trivy scans).
     test_title=$(basename "${scan_file}")
 
-    # Step 1: look up existing test ID for this engagement + type + filename.
-    local test_id
-    test_id=$(find_existing_test "${engagement_id}" "${scan_type}" "${scan_file}")
-
-    if [ -n "${test_id}" ]; then
-        # Step 2: reimport into the exact test ID — zero ambiguity.
-        echo "  Found existing test ID ${test_id}, reimporting..."
-        response=$(curl -s -w "\n%{http_code}" -X POST \
-            "${DEFECTDOJO_URL}/api/v2/reimport-scan/" \
-            -H "Authorization: Token ${DEFECTDOJO_API_TOKEN}" \
-            -F "test=${test_id}" \
-            -F "scan_type=${scan_type}" \
-            -F "file=@${scan_file}" \
-            -F "minimum_severity=Info" \
-            -F "active=true" \
-            -F "verified=false" \
-            -F "scan_date=${scan_date}" \
-            -F "close_old_findings=true" \
-            -F "close_old_findings_product_scope=false" \
-            -F "do_not_reactivate=false")
-        http_code=$(echo "${response}" | tail -1)
-        body=$(echo "${response}" | sed '$d')
-
-        if [ "${http_code}" -ge 200 ] && [ "${http_code}" -lt 300 ] 2>/dev/null; then
-            echo "  Reimport successful (HTTP ${http_code})"
-            return 0
-        fi
-
-        echo "  ERROR: Reimport failed (HTTP ${http_code})" >&2
-        echo "  Response: ${body}" >&2
-        UPLOAD_FAILURES=$((UPLOAD_FAILURES + 1))
-        return 1
-    fi
-
-    # Step 3: no existing test found — create it via import, using the filename
-    # as the title so find_existing_test can locate it on all future runs.
-    echo "  No existing test found, importing for the first time..."
     response=$(curl -s -w "\n%{http_code}" -X POST \
-        "${DEFECTDOJO_URL}/api/v2/import-scan/" \
+        "${DEFECTDOJO_URL}/api/v2/reimport-scan/" \
         -H "Authorization: Token ${DEFECTDOJO_API_TOKEN}" \
         -F "scan_type=${scan_type}" \
+        -F "test_title=${test_title}" \
         -F "file=@${scan_file}" \
-        -F "engagement=${engagement_id}" \
+        -F "product_name=${PRODUCT_NAME}" \
+        -F "engagement_name=${ENGAGEMENT_NAME}" \
         -F "minimum_severity=Info" \
         -F "active=true" \
         -F "verified=false" \
         -F "scan_date=${scan_date}" \
         -F "close_old_findings=true" \
         -F "close_old_findings_product_scope=false" \
-        -F "title=${test_title}")
+        -F "do_not_reactivate=false" \
+        -F "auto_create_context=true")
     http_code=$(echo "${response}" | tail -1)
     body=$(echo "${response}" | sed '$d')
 
     if [ "${http_code}" -ge 200 ] && [ "${http_code}" -lt 300 ] 2>/dev/null; then
-        echo "  Import successful (HTTP ${http_code})"
+        echo "  Upload successful (HTTP ${http_code})"
         return 0
     fi
 
-    echo "  ERROR: Import failed (HTTP ${http_code})" >&2
+    echo "  ERROR: Upload failed (HTTP ${http_code})" >&2
     echo "  Response: ${body}" >&2
     UPLOAD_FAILURES=$((UPLOAD_FAILURES + 1))
     return 1
