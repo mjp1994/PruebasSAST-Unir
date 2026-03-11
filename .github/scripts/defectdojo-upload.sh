@@ -40,9 +40,8 @@ api_request() {
 
 find_or_create_product() {
     local encoded
-    # jq -sRr @uri is used here for percent-encoding the product name so it is
-    # safe to embed in a query string. It reads stdin as a raw string (-R),
-    # slurps it into one value (-s), and applies the @uri format filter.
+    # jq -sRr @uri: percent-encode for safe use in query strings.
+    # -R reads stdin as raw string, -s slurps into one value, @uri applies percent-encoding.
     encoded=$(echo "${PRODUCT_NAME}" | jq -sRr @uri)
     local response count
 
@@ -129,12 +128,44 @@ find_or_create_engagement() {
 }
 
 # ---------------------------------------------------------------------------
+# find_existing_test: looks up a test by engagement + scan_type + filename title.
+#
+# Filtering by title (set to the scan filename on first import) ensures that
+# two scans sharing the same scan_type — e.g. "trivy-fs-results.json" and
+# "trivy-image-results.json" are both "Trivy Scan" — map to distinct tests
+# and are never collapsed into one another.
+#
+# Returns the numeric test ID on stdout, or empty string if not found.
+# On API failure returns empty so the caller falls back to a fresh import.
+# ---------------------------------------------------------------------------
+find_existing_test() {
+    local engagement_id=$1 scan_type=$2 scan_file=$3
+
+    local encoded_type encoded_title response count
+    encoded_type=$(echo "${scan_type}" | jq -sRr @uri)
+    encoded_title=$(basename "${scan_file}" | jq -sRr @uri)
+
+    response=$(api_request "GET" \
+        "tests/?engagement=${engagement_id}&scan_type=${encoded_type}&title=${encoded_title}" \
+        "") || return 0
+
+    count=$(echo "${response}" | jq -r '.count // 0')
+    if [ "${count}" -gt 0 ]; then
+        echo "${response}" | jq -r '.results[0].id'
+    fi
+}
+
+# ---------------------------------------------------------------------------
 # upload_scan: uploads a scan file via multipart/form-data.
 # Uses raw curl (not api_request) because the import endpoints require
 # multipart form fields rather than a JSON body.
-# Tries reimport first (updates an existing test) and falls back to import
-# (creates a new test). Both failures increment UPLOAD_FAILURES so the
-# caller can decide whether to fail the pipeline.
+#
+# Strategy:
+#   1. Look up an existing test by engagement + scan_type + filename title.
+#   2. If found, call reimport-scan with the explicit test ID — unambiguous,
+#      guaranteed to update the correct test in-place, no duplicates possible.
+#   3. If not found, call import-scan to create the test for the first time,
+#      recording the filename as the title so step 1 finds it on all future runs.
 # ---------------------------------------------------------------------------
 upload_scan() {
     local engagement_id=$1 scan_file=$2 scan_type=$3
@@ -156,37 +187,47 @@ upload_scan() {
     local scan_date response http_code body
     scan_date=$(date +%Y-%m-%d)
 
-    # Try reimport first (updates existing test, avoids duplicate test entries).
-    # test_type lets DefectDojo locate the existing test within the engagement.
-    # auto_create_context=true means on first run it creates the test itself,
-    # so we should never need to fall back to the import endpoint at all.
-    response=$(curl -s -w "\n%{http_code}" -X POST \
-        "${DEFECTDOJO_URL}/api/v2/reimport-scan/" \
-        -H "Authorization: Token ${DEFECTDOJO_API_TOKEN}" \
-        -F "scan_type=${scan_type}" \
-        -F "test_type=${scan_type}" \
-        -F "file=@${scan_file}" \
-        -F "engagement=${engagement_id}" \
-        -F "minimum_severity=Info" \
-        -F "active=true" \
-        -F "verified=false" \
-        -F "scan_date=${scan_date}" \
-        -F "close_old_findings=true" \
-        -F "close_old_findings_product_scope=false" \
-        -F "do_not_reactivate=false" \
-        -F "auto_create_context=true")
-    http_code=$(echo "${response}" | tail -1)
-    body=$(echo "${response}" | sed '$d')
+    # Use the filename as a stable, unique title per scan file.
+    local test_title
+    test_title=$(basename "${scan_file}")
 
-    if [ "${http_code}" -ge 200 ] && [ "${http_code}" -lt 300 ] 2>/dev/null; then
-        echo "  Reimport successful (HTTP ${http_code})"
-        return 0
+    # Step 1: look up existing test ID for this engagement + type + filename.
+    local test_id
+    test_id=$(find_existing_test "${engagement_id}" "${scan_type}" "${scan_file}")
+
+    if [ -n "${test_id}" ]; then
+        # Step 2: reimport into the exact test ID — zero ambiguity.
+        echo "  Found existing test ID ${test_id}, reimporting..."
+        response=$(curl -s -w "\n%{http_code}" -X POST \
+            "${DEFECTDOJO_URL}/api/v2/reimport-scan/" \
+            -H "Authorization: Token ${DEFECTDOJO_API_TOKEN}" \
+            -F "test=${test_id}" \
+            -F "scan_type=${scan_type}" \
+            -F "file=@${scan_file}" \
+            -F "minimum_severity=Info" \
+            -F "active=true" \
+            -F "verified=false" \
+            -F "scan_date=${scan_date}" \
+            -F "close_old_findings=true" \
+            -F "close_old_findings_product_scope=false" \
+            -F "do_not_reactivate=false")
+        http_code=$(echo "${response}" | tail -1)
+        body=$(echo "${response}" | sed '$d')
+
+        if [ "${http_code}" -ge 200 ] && [ "${http_code}" -lt 300 ] 2>/dev/null; then
+            echo "  Reimport successful (HTTP ${http_code})"
+            return 0
+        fi
+
+        echo "  ERROR: Reimport failed (HTTP ${http_code})" >&2
+        echo "  Response: ${body}" >&2
+        UPLOAD_FAILURES=$((UPLOAD_FAILURES + 1))
+        return 1
     fi
 
-    echo "  Reimport failed (HTTP ${http_code}), trying import..." >&2
-    [ -n "${body}" ] && echo "  Reimport response: ${body}" >&2
-
-    # Fall back to import (creates a new test for this scan type)
+    # Step 3: no existing test found — create it via import, using the filename
+    # as the title so find_existing_test can locate it on all future runs.
+    echo "  No existing test found, importing for the first time..."
     response=$(curl -s -w "\n%{http_code}" -X POST \
         "${DEFECTDOJO_URL}/api/v2/import-scan/" \
         -H "Authorization: Token ${DEFECTDOJO_API_TOKEN}" \
@@ -198,7 +239,8 @@ upload_scan() {
         -F "verified=false" \
         -F "scan_date=${scan_date}" \
         -F "close_old_findings=true" \
-        -F "close_old_findings_product_scope=false")
+        -F "close_old_findings_product_scope=false" \
+        -F "title=${test_title}")
     http_code=$(echo "${response}" | tail -1)
     body=$(echo "${response}" | sed '$d')
 
@@ -207,7 +249,7 @@ upload_scan() {
         return 0
     fi
 
-    echo "  ERROR: Import also failed (HTTP ${http_code})" >&2
+    echo "  ERROR: Import failed (HTTP ${http_code})" >&2
     echo "  Response: ${body}" >&2
     UPLOAD_FAILURES=$((UPLOAD_FAILURES + 1))
     return 1
@@ -215,10 +257,9 @@ upload_scan() {
 
 main() {
     # ---------------------------------------------------------------------------
-    # Guard: missing credentials are treated as a hard misconfiguration error
-    # (exit 1) rather than a silent skip (exit 0), so CI pipelines catch it.
-    # If you intentionally want to skip DefectDojo in some environments, set
-    # DEFECTDOJO_SKIP=true before running this script.
+    # Guard: missing credentials are a hard error (exit 1) not a silent skip,
+    # so CI pipelines catch misconfiguration immediately.
+    # Set DEFECTDOJO_SKIP=true to intentionally bypass upload in some envs.
     # ---------------------------------------------------------------------------
     if [ -z "$DEFECTDOJO_URL" ] || [ -z "$DEFECTDOJO_API_TOKEN" ]; then
         if [ "${DEFECTDOJO_SKIP:-false}" = "true" ]; then
@@ -230,11 +271,10 @@ main() {
         exit 1
     fi
 
-    # Mask the token in any debug output. If set -x is active in a parent
-    # shell, the token would be visible in expanded curl commands. Unsetting
-    # here won't help in that case, but at least our own echo statements are
-    # safe and serve as a reminder to avoid logging full curl invocations.
-    : "DEFECTDOJO_API_TOKEN is set but intentionally not echoed to avoid leaking secrets"
+    # DEFECTDOJO_API_TOKEN is intentionally never echoed. If set -x is active
+    # in a parent shell, the token will still appear in expanded curl commands —
+    # ensure your CI runner masks the variable in its log output.
+    : "token present, not logged"
 
     echo "DefectDojo URL: ${DEFECTDOJO_URL}"
     echo "Product:        ${PRODUCT_NAME}"
@@ -258,10 +298,8 @@ main() {
     echo "Engagement ID: ${ENGAGEMENT_ID}"
     echo ""
 
-    # Each upload_scan call tracks its own failure via UPLOAD_FAILURES.
-    # We do NOT use `|| true` here so that a non-zero return propagates
-    # the failure count correctly while still allowing subsequent scans
-    # to be attempted. The final exit code is based on UPLOAD_FAILURES.
+    # Each upload_scan call increments UPLOAD_FAILURES on error but does not
+    # abort, so all scans are always attempted regardless of individual failures.
     upload_scan "$ENGAGEMENT_ID" "semgrep-results.json"        "Semgrep JSON Report"
     upload_scan "$ENGAGEMENT_ID" "trivy-fs-results.json"       "Trivy Scan"
     upload_scan "$ENGAGEMENT_ID" "trivy-image-results.json"    "Trivy Scan"
