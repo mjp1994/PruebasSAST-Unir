@@ -20,6 +20,9 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+          # Caches ~/.npm across runs. Cache key is based on the lockfile so
+          # it invalidates automatically whenever dependencies change.
+          cache: "npm"
 
       - run: npm install
 
@@ -54,6 +57,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.x"
+          # Caches the pip download cache. Key includes the semgrep version
+          # string so upgrading semgrep automatically busts the cache.
+          cache: "pip"
 
       - name: Run Semgrep
         run: |
@@ -80,6 +86,22 @@ jobs:
 
       - run: docker load -i juice-shop-image.tar
 
+      # Trivy downloads its vulnerability DB on every run (~30-50 MB).
+      # Caching it under a date-based key means it refreshes once per day
+      # rather than on every push, which is a meaningful time saving.
+      - name: Cache Trivy vulnerability DB
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/trivy
+          key: trivy-db-${{ runner.os }}-${{ steps.date.outputs.date }}
+          restore-keys: |
+            trivy-db-${{ runner.os }}-
+        id: trivy-cache
+
+      - name: Get current date (for Trivy cache key)
+        id: date
+        run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+
       - name: Trivy filesystem scan
         uses: aquasecurity/trivy-action@master
         with:
@@ -88,6 +110,8 @@ jobs:
           scanners: "vuln"
           format: "json"
           output: "trivy-fs-results.json"
+          # Tell Trivy to use (and populate) the cache directory above.
+          cache-dir: ~/.cache/trivy
         continue-on-error: true
 
       - name: Trivy image scan
@@ -98,16 +122,36 @@ jobs:
           scanners: "vuln"
           format: "json"
           output: "trivy-image-results.json"
+          cache-dir: ~/.cache/trivy
         continue-on-error: true
 
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
 
       - name: Generate lock files for Dependency-Check
         run: |
           npm install --package-lock-only --ignore-scripts
           cd frontend && npm install --package-lock-only --ignore-scripts
+
+      # The Dependency-Check NVD database is large (~300-500 MB) and is
+      # re-downloaded from scratch on every run without caching. A daily
+      # cache key keeps it fresh for security purposes while avoiding the
+      # full download on every push. The restore-keys fallback means a
+      # slightly stale DB is used if today's cache hasn't been populated yet
+      # (e.g. first run of the day), which is acceptable for a CI pipeline.
+      - name: Cache OWASP Dependency-Check DB
+        uses: actions/cache@v4
+        with:
+          path: ~/.dependency-check/data
+          key: dep-check-db-${{ runner.os }}-${{ steps.depcheck-date.outputs.date }}
+          restore-keys: |
+            dep-check-db-${{ runner.os }}-
+
+      - name: Get current date (for Dependency-Check cache key)
+        id: depcheck-date
+        run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
 
       - name: OWASP Dependency-Check
         uses: dependency-check/Dependency-Check_Action@main
@@ -116,7 +160,7 @@ jobs:
           path: "."
           format: "XML"
           out: "."
-          args: '--exclude "**/test/files/**"'
+          args: '--exclude "**/test/files/**" --data ~/.dependency-check/data'
         continue-on-error: true
 
       - uses: actions/upload-artifact@v4
