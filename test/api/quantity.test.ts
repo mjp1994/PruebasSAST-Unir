@@ -141,7 +141,11 @@ void describe('/api/Quantitys/:ids', () => {
     })
     const res = await request(app)
       .get('/api/Quantitys/1')
-      .set({ Authorization: `Bearer ${token}`, 'content-type': 'application/json' })
+      .set({
+        Authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+        'X-Forwarded-For': '123.456.789'
+      })
 
     assert.equal(res.status, 200)
   })
@@ -194,7 +198,11 @@ void describe('/api/Quantitys/:ids', () => {
     })
     const res = await request(app)
       .put('/api/Quantitys/1')
-      .set({ Authorization: `Bearer ${token}`, 'content-type': 'application/json' })
+      .set({
+        Authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+        'X-Forwarded-For': '123.456.789'
+      })
       .send({ quantity: 100 })
 
     assert.equal(res.status, 200)
