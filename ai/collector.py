@@ -1,23 +1,8 @@
-"""
-collector.py — Phase 1a  (patched)
-Fetches all findings from DefectDojo, enriches with EPSS scores, saves to JSON.
-
-Fixes applied vs original:
-  • CVE extraction reads vulnerability_ids as a list-of-dicts (API response),
-    not as a flat string — the original url-split heuristic silently dropped
-    most CVEs and was fragile to URL format changes.
-  • Duplicate findings are excluded at fetch time so downstream feature
-    engineering sees the same count as the DefectDojo UI.
-
-Usage:
-    python collector.py
-"""
-
 import os
 import json
 import time
 import requests
-from datetime import datetime
+from datetime import datetime, date
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -36,12 +21,6 @@ headers = {
     "Content-Type": "application/json",
 }
 
-# ---------------------------------------------------------------------------
-# 1. Fetch all findings (paginated)
-#    FIX — add duplicate=false to the query so the API excludes duplicates at
-#    source.  This matches what the DefectDojo UI shows and prevents the
-#    feature matrix from inflating with redundant rows.
-# ---------------------------------------------------------------------------
 print("Fetching findings from DefectDojo...")
 
 findings: list[dict] = []
@@ -59,13 +38,6 @@ while url:
 print(f"Done. {len(findings)} findings collected.")
 
 
-# ---------------------------------------------------------------------------
-# 2. CVE extraction helper
-#    FIX — vulnerability_ids from the DefectDojo API is a list of dicts:
-#      [{"vulnerability_id": "CVE-2023-37903", "url": "https://..."}]
-#    The original code tried to split a URL string on "/" which was fragile
-#    and quietly failed when the list contained dicts.
-# ---------------------------------------------------------------------------
 def extract_cve_ids(finding: dict) -> list[str]:
     """Return all CVE IDs found in a finding, in priority order."""
     cves: list[str] = []
@@ -85,6 +57,26 @@ def extract_cve_ids(finding: dict) -> list[str]:
         cves.append(cve)
 
     return cves
+
+
+def compute_sla(finding: dict) -> int:
+    """Return SLA days remaining, preferring API-provided values when available."""
+    sla_days_remaining = finding.get("sla_days_remaining")
+    if sla_days_remaining is not None:
+        try:
+            return int(float(sla_days_remaining))
+        except (TypeError, ValueError):
+            pass
+
+    sla_expiration_date = finding.get("sla_expiration_date")
+    if not sla_expiration_date:
+        return 0
+
+    try:
+        expiration = date.fromisoformat(str(sla_expiration_date)[:10])
+        return (expiration - datetime.utcnow().date()).days
+    except (TypeError, ValueError):
+        return 0
 
 
 # ---------------------------------------------------------------------------
@@ -144,6 +136,14 @@ else:
     for f in findings:
         f["_epss_score"]      = 0.0
         f["_epss_percentile"] = 0.0
+
+for finding in findings:
+    finding["_component_name"] = finding.get("component_name") or ""
+    finding["_component_version"] = finding.get("component_version") or ""
+    finding["_found_by_count"] = len(finding.get("found_by") or [])
+    finding["_endpoints_count"] = len(finding.get("endpoints") or [])
+    finding["_nb_occurrences"] = finding.get("nb_occurrences", 1)
+    finding["_sla_days_remaining"] = compute_sla(finding)
 
 # ---------------------------------------------------------------------------
 # 4. Save

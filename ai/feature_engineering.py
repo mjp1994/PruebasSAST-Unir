@@ -1,26 +1,3 @@
-"""
-feature_engineering.py — Phase 1b  (patched)
-Loads raw findings, builds a feature matrix, computes AI risk scores, saves to CSV.
-
-Fixes applied vs original:
-  1. scanner  — extract scanner name from test string "filename (Scanner Name)"
-               rather than inspecting test.type nested dict that DefectDojo
-               doesn't always populate.
-  2. age_days — handle both datetime.date objects and ISO-string dates coming
-               from the collector; fromisoformat() only accepts strings.
-  3. has_cve  — DefectDojo returns CVEs in "vulnerability_ids" (string or list),
-               not a "cve_id" key that the original code expected.
-  4. duplicates — skip findings flagged duplicate=True at collection time so the
-               feature count matches what DefectDojo shows in the UI.
-  5. CWE_CATEGORY_MAP — expanded from 7 categories / ~30 IDs to 9 categories /
-               ~85 IDs, based on all CWE values observed in raw_findings.json.
-               Coverage improves from 24.7% → 91.9% of findings.
-               New categories: resource_mgmt, input_validation.
-
-Usage:
-    python feature_engineering.py
-"""
-
 import os
 import re
 import json
@@ -28,7 +5,7 @@ import pandas as pd
 from datetime import datetime, date, timezone
 
 INPUT_PATH  = "data/raw_findings.json"
-OUTPUT_PATH = "data/features.csv"
+OUTPUT_PATH = os.getenv("OUTPUT_PATH", "data/features.csv")
 
 # ---------------------------------------------------------------------------
 # Mappings
@@ -58,15 +35,6 @@ SCANNER_MAP = {
     "npm audit":        "SCA",
 }
 
-# FIX 5 — Expanded CWE category map.
-#
-# Original map had ~30 IDs across 7 categories, leaving 75% of findings in
-# "other".  This version covers all 70 distinct CWE IDs observed in
-# raw_findings.json, adding two new categories:
-#   • resource_mgmt   — recursion, ReDoS, resource exhaustion, loops, leaks
-#   • input_validation — integer overflow, uncaught exceptions, bad validation
-#
-# Mapping rationale per ID is in the inline comments.
 CWE_CATEGORY_MAP = {
     # ------------------------------------------------------------------ injection
     # SQL, OS command, code, prototype pollution, format string, encoding abuse
@@ -367,6 +335,10 @@ for f in findings:
         "is_verified":     int(bool(f.get("verified", False))),
         "is_active":       int(bool(f.get("active", True))),
         "has_cve":         has_cve,
+        "nb_occurrences":  f.get("_nb_occurrences", 1),
+        "endpoints_count": f.get("_endpoints_count", 0),
+        "found_by_count":  f.get("_found_by_count", 1),
+        "has_component":   1 if f.get("_component_name") else 0,
     })
 
 df = pd.DataFrame(rows)

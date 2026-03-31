@@ -1,14 +1,4 @@
 #!/usr/bin/env python3
-"""
-Query all findings for a DefectDojo engagement, fetch EPSS scores from
-FIRST.org, and PATCH each finding with epss_score / epss_percentile.
-
-This is the definitive EPSS enrichment step: it writes directly to
-DefectDojo's database via the API rather than relying on parsers or
-background tasks to read EPSS data from scan files.
-
-Usage: defectdojo-epss-patch.py <defectdojo_url> <api_token> <engagement_id>
-"""
 
 import json
 import re
