@@ -1,0 +1,39 @@
+# Security Command Relay — installed on target repos by ai-dev-sec-ops
+#
+# Listens for slash commands on PR comments and dispatches them
+# to the control plane repo for processing.
+#
+# Commands: /approve, /remediate, /amend, /dismiss, /false-positive, /rescan, /status
+#
+# Requires secrets:
+#   CONTROL_PLANE_TOKEN — PAT with actions:write on the control plane repo
+
+name: Security Command Relay
+
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  dispatch:
+    if: >
+      github.event.issue.pull_request &&
+      startsWith(github.event.comment.body, '/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: peter-evans/slash-command-dispatch@13bc09769d122a64f75aa5037256f6f2d78be8c4 # v4
+        with:
+          token: ${{ secrets.CONTROL_PLANE_TOKEN }}
+          # IMPORTANT: Update this to your control plane repo
+          repository: gazzwi86/ai-dev-sec-ops
+          dispatch-type: repository
+          commands: |
+            approve
+            remediate
+            amend
+            dismiss
+            false-positive
+            rescan
+            status
+          permission: write
+          issue-type: pull-request
