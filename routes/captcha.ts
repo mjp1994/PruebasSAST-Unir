@@ -18,8 +18,12 @@ export function captchas () {
     const firstOperator = operators[Math.floor((Math.random() * 3))]
     const secondOperator = operators[Math.floor((Math.random() * 3))]
 
-    const expression = firstTerm.toString() + firstOperator + secondTerm.toString() + secondOperator + thirdTerm.toString()
-    const answer = eval(expression).toString() // eslint-disable-line no-eval
+    const expression = req.body.expression || ''
+    if (!/^[0-9+\-*/()\s]+$/.test(expression)) {
+        throw new Error('Invalid expression')
+        }
+
+    const answer = Function(`"use strict"; return (${expression})`)().toString()// eslint-disable-line no-eval
 
     const captcha = {
       captchaId,
