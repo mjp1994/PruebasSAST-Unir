@@ -24,6 +24,13 @@ let trainingFile = config.get<string>('application.chatBot.trainingData')
 let testCommand: string
 export let bot: Bot | null = null
 let initializationPromise: Promise<any> | null = null
+const fallbackResponses = [
+  'I didn\'t quite get that. Can you rephrase?',
+  'Hmm, I\'m not sure. Try asking differently.',
+  'I\'m still learning. Can you clarify?'
+]
+
+const getFallbackResponse = () => fallbackResponses[Math.floor(Math.random() * fallbackResponses.length)]
 
 export async function initializeChatbot () {
   if (initializationPromise !== null) {
@@ -110,10 +117,13 @@ async function processQuery (user: User, req: Request, res: Response, next: Next
       } else {
         res.status(200).json({
           action: 'response',
-          body: config.get('application.chatBot.defaultResponse')
+          body: getFallbackResponse()
         })
       }
     } else {
+      if (response.action === 'response' && response.body === config.get('application.chatBot.defaultResponse')) {
+        response.body = getFallbackResponse()
+      }
       res.status(200).json(response)
     }
   } catch (err) {
@@ -121,7 +131,7 @@ async function processQuery (user: User, req: Request, res: Response, next: Next
       await bot.respond(testCommand, `${user.id}`)
       res.status(200).json({
         action: 'response',
-        body: config.get('application.chatBot.defaultResponse')
+        body: getFallbackResponse()
       })
     } catch (err) {
       challengeUtils.solveIf(challenges.killChatbotChallenge, () => { return true })
