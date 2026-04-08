@@ -159,6 +159,47 @@ guide. If this does not solve your issue please post your specific problem or qu
 
 :stop_sign: **Please avoid opening GitHub issues for support requests or questions!**
 
+## Project Evolution (Deliveries)
+
+### 1. Discovery & Reverse Engineering
+This project was selected as a legacy base due to its Node.js/Angular stack.
+
+**Onboarding Metrics:**
+* **Total Setup Time**: 20 minutes.
+* **Provisioning**: <5 min (Success).
+* **Dependency Injection**: ~15 min (Warning: 7 critical vulnerabilities found).
+* **Project Health**: 5/5 for Documentation Clarity, 3/5 for Security Posture.
+
+**AI-Driven Discovery:**
+The system architecture was mapped into functional domains including User Management, Product Catalog, and a Challenge System for gamification.
+
+---
+
+### 2. Governance & Technical Debt Audit
+We implemented a CI/CD pipeline integrated with **SonarCloud** for continuous code quality analysis.
+
+* **Live Metrics**: [SonarCloud Summary](https://sonarcloud.io/summary/overall?id=dacaslles_juice-shop&branch=master).
+* **Audit Reports**: Detailed analysis can be found in the [Tech Debt Audit](./tech_debt_audit.md) and the [Refactoring Plan](./refactoring_plan.md).
+
+---
+
+### 3. Security Hardening
+
+#### Software Bill of Materials (SBOM)
+We detected **777 total components** within the npm/Node.js ecosystem. Key dependencies include `express`, `sequelize`, and `jsonwebtoken`.
+
+#### Vulnerability Scanning (VSA)
+Using **Snyk**, we identified 71 findings and 107 exploit paths.
+
+| Severity | Library | Vulnerability | Remediation |
+| :--- | :--- | :--- | :--- |
+| **Critical** | `vm2` | Remote Code Execution (RCE) | Upgraded to v3.10.0. |
+| **Critical** | `multer` | Uncaught Exception | Upgraded to v2.1.1. |
+| **High** | `jsonwebtoken` | Auth Bypass | Upgraded to v9.0.0. |
+
+#### Secret Protection
+To prevent credential leaks, we implemented **Husky** hooks with **Secretlint**. Any commit containing sensitive patterns is automatically rejected.
+
 ### Official companion guide
 
 [![Write Goodreads Review](https://img.shields.io/badge/goodreads-write%20review-49557240.svg)](https://www.goodreads.com/review/edit/49557240)
