@@ -21,13 +21,13 @@ export function retrieveLoggedInUser () {
         // If not provided, both these variables will be undefined.
         const fieldsParam = req.query?.fields as string | undefined
         const requestedFields = fieldsParam ? fieldsParam.split(',').map(f => f.trim()) : []
+        const allowedFields = ['id', 'email', 'lastLoginIp', 'profileImage', 'username', 'role', 'isActive']
 
         let baseUser: any = {}
 
         if (requestedFields.length > 0) {
-          // When fields are specified, return only those fields
           for (const field of requestedFields) {
-            if (user?.data[field as keyof typeof user.data] !== undefined) {
+            if (allowedFields.includes(field) && user?.data[field as keyof typeof user.data] !== undefined) {
               baseUser[field] = user?.data[field as keyof typeof user.data]
             }
           }

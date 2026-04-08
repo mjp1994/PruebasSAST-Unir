@@ -4,6 +4,7 @@
  */
 
 import fs from 'node:fs'
+import path from 'node:path'
 import { Readable } from 'node:stream'
 import { finished } from 'node:stream/promises'
 import { type Request, type Response, type NextFunction } from 'express'
@@ -26,7 +27,13 @@ export function profileImageUrlUpload () {
             throw new Error('url returned a non-OK status code or an empty body')
           }
           const ext = ['jpg', 'jpeg', 'png', 'svg', 'gif'].includes(url.split('.').slice(-1)[0].toLowerCase()) ? url.split('.').slice(-1)[0].toLowerCase() : 'jpg'
-          const fileStream = fs.createWriteStream(`frontend/dist/frontend/assets/public/images/uploads/${loggedInUser.data.id}.${ext}`, { flags: 'w' })
+          const uploadsDir = path.resolve('frontend/dist/frontend/assets/public/images/uploads')
+          const safeId = String(loggedInUser.data.id).replace(/[^a-zA-Z0-9_-]/g, '')
+          const uploadPath = path.join(uploadsDir, `${safeId}.${ext}`)
+          if (!uploadPath.startsWith(uploadsDir)) {
+            throw new Error('Invalid file path')
+          }
+          const fileStream = fs.createWriteStream(uploadPath, { flags: 'w' })
           await finished(Readable.fromWeb(response.body as any).pipe(fileStream))
           const user = await UserModel.findByPk(loggedInUser.data.id)
           await user?.update({ profileImage: `/assets/public/images/uploads/${loggedInUser.data.id}.${ext}` })

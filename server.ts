@@ -152,7 +152,7 @@ const collectDurationPromise = (name: string, func: (...args: any) => Promise<an
       end()
       return res
     } catch (err) {
-      console.error('Error in timed startup function: ' + name, err)
+      console.error(`Error in timed startup function: ${String(name)}`, err)
       throw err
     }
   }
@@ -177,9 +177,14 @@ restoreOverwrittenFilesWithOriginals().then(() => {
   /* Compression for all requests */
   app.use(compression())
 
-  /* Bludgeon solution for possible CORS problems: Allow everything! */
-  app.options('*', cors())
-  app.use(cors())
+  /* CORS: restrict to trusted origins */
+  const corsOptions = {
+    origin: process.env.CORS_ORIGIN || 'http://localhost:3000',
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    credentials: true
+  }
+  app.options('*', cors(corsOptions))
+  app.use(cors(corsOptions))
 
   /* Security middleware */
   app.use(helmet.noSniff())
@@ -266,19 +271,19 @@ restoreOverwrittenFilesWithOriginals().then(() => {
 
   // vuln-code-snippet start directoryListingChallenge accessLogDisclosureChallenge
   /* /ftp directory browsing and file download */ // vuln-code-snippet neutral-line directoryListingChallenge
-  app.use('/ftp', serveIndexMiddleware, serveIndex('ftp', { icons: true })) // vuln-code-snippet vuln-line directoryListingChallenge
+  app.use('/ftp', serveIndexMiddleware, serveIndex('ftp', { icons: true, filter: (filename: string) => !filename.startsWith('.') })) // vuln-code-snippet vuln-line directoryListingChallenge
   app.use('/ftp(?!/quarantine)/:file', servePublicFiles()) // vuln-code-snippet vuln-line directoryListingChallenge
   app.use('/ftp/quarantine/:file', serveQuarantineFiles()) // vuln-code-snippet neutral-line directoryListingChallenge
 
-  app.use('/.well-known', serveIndexMiddleware, serveIndex('.well-known', { icons: true, view: 'details' }))
+  app.use('/.well-known', serveIndexMiddleware, serveIndex('.well-known', { icons: true, view: 'details', filter: (filename: string) => !filename.startsWith('.') }))
   app.use('/.well-known', express.static('.well-known'))
 
   /* /encryptionkeys directory browsing */
-  app.use('/encryptionkeys', serveIndexMiddleware, serveIndex('encryptionkeys', { icons: true, view: 'details' }))
+  app.use('/encryptionkeys', serveIndexMiddleware, serveIndex('encryptionkeys', { icons: true, view: 'details', filter: (filename: string) => !filename.startsWith('.') }))
   app.use('/encryptionkeys/:file', serveKeyFiles())
 
   /* /logs directory browsing */ // vuln-code-snippet neutral-line accessLogDisclosureChallenge
-  app.use('/support/logs', serveIndexMiddleware, serveIndex('logs', { icons: true, view: 'details' })) // vuln-code-snippet vuln-line accessLogDisclosureChallenge
+  app.use('/support/logs', serveIndexMiddleware, serveIndex('logs', { icons: true, view: 'details', filter: (filename: string) => !filename.startsWith('.') })) // vuln-code-snippet vuln-line accessLogDisclosureChallenge
   app.use('/support/logs', verify.accessControlChallenges()) // vuln-code-snippet hide-line
   app.use('/support/logs/:file', serveLogFiles()) // vuln-code-snippet vuln-line accessLogDisclosureChallenge
 

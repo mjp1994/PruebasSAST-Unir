@@ -15,7 +15,8 @@ export function trackOrder () {
     const id = !utils.isChallengeEnabled(challenges.reflectedXssChallenge) ? String(req.params.id).replace(/[^\w-]+/g, '') : utils.trunc(req.params.id, 60)
 
     challengeUtils.solveIf(challenges.reflectedXssChallenge, () => { return utils.contains(id, '<iframe src="javascript:alert(`xss`)">') })
-    db.ordersCollection.find({ $where: `this.orderId === '${id}'` }).then((order: any) => {
+    const sanitizedId = typeof id === 'string' ? id.replace(/[^\w-]/g, '') : String(id)
+    db.ordersCollection.find({ orderId: sanitizedId }).then((order: any) => {
       const result = utils.queryResultToJson(order)
       challengeUtils.solveIf(challenges.noSqlOrdersChallenge, () => { return result.data.length > 1 })
       if (result.data[0] === undefined) {

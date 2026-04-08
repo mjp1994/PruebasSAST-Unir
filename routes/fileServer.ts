@@ -30,7 +30,14 @@ export function servePublicFiles () {
       challengeUtils.solveIf(challenges.directoryListingChallenge, () => { return file.toLowerCase() === 'acquisitions.md' })
       verifySuccessfulPoisonNullByteExploit(file)
 
-      res.sendFile(path.resolve('ftp/', file))
+      const ftpDir = path.resolve('ftp')
+      const resolvedPath = path.resolve(ftpDir, file)
+      if (!resolvedPath.startsWith(ftpDir)) {
+        res.status(403)
+        next(new Error('File access denied!'))
+        return
+      }
+      res.sendFile(resolvedPath)
     } else {
       res.status(403)
       next(new Error('Only .md and .pdf files are allowed!'))

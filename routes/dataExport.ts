@@ -30,14 +30,16 @@ export function dataExport () {
         }
 
         try {
-          orders = await db.ordersCollection.find({ email: updatedEmail })
+          const safeUpdatedEmail = typeof updatedEmail === 'string' ? updatedEmail : String(updatedEmail)
+          orders = await db.ordersCollection.find({ email: safeUpdatedEmail })
         } catch (error) {
           next(new Error(`Error retrieving orders for ${updatedEmail}`))
           return
         }
 
         try {
-          reviews = await db.reviewsCollection.find({ author: email })
+          const safeEmail = typeof email === 'string' ? email : String(email)
+          reviews = await db.reviewsCollection.find({ author: safeEmail })
         } catch (error) {
           next(new Error(`Error retrieving reviews for ${updatedEmail}`))
           return

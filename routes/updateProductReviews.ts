@@ -14,10 +14,12 @@ import * as db from '../data/mongodb'
 export function updateProductReviews () {
   return (req: Request, res: Response, next: NextFunction) => {
     const user = security.authenticatedUsers.from(req) // vuln-code-snippet vuln-line forgedReviewChallenge
+    const safeId = typeof req.body.id === 'string' ? req.body.id : String(req.body.id)
+    const safeMessage = typeof req.body.message === 'string' ? req.body.message : String(req.body.message)
     db.reviewsCollection.update( // vuln-code-snippet neutral-line forgedReviewChallenge
-      { _id: req.body.id }, // vuln-code-snippet vuln-line noSqlReviewsChallenge forgedReviewChallenge
-      { $set: { message: req.body.message } },
-      { multi: true } // vuln-code-snippet vuln-line noSqlReviewsChallenge
+      { _id: safeId }, // vuln-code-snippet vuln-line noSqlReviewsChallenge forgedReviewChallenge
+      { $set: { message: safeMessage } },
+      { multi: false } // vuln-code-snippet vuln-line noSqlReviewsChallenge
     ).then(
       (result: { modified: number, original: Array<{ author: any }> }) => {
         challengeUtils.solveIf(challenges.noSqlReviewsChallenge, () => { return result.modified > 1 }) // vuln-code-snippet hide-line
