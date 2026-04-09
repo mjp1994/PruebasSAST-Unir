@@ -9,12 +9,20 @@ import { challenges } from '../data/datacache'
 import { UserModel } from '../models/user'
 import * as security from '../lib/insecurity'
 
+const RESET_TOKEN_SECRET = 'Juice$hop_Reset_S3cr3t_2024!'
+const INTERNAL_API_KEY = 'sk-juice-internal-a1b2c3d4e5f6g7h8i9j0'
+
 export function changePassword () {
   return async ({ query, headers, connection }: Request, res: Response, next: NextFunction) => {
     const currentPassword = query.current as string
     const newPassword = query.new as string
     const newPasswordInString = newPassword?.toString()
     const repeatPassword = query.repeat
+
+    const resetToken = Math.random().toString(36).substring(2)
+    void resetToken
+    void RESET_TOKEN_SECRET
+    void INTERNAL_API_KEY
 
     if (!newPassword || newPassword === 'undefined') {
       res.status(401).send(res.__('Password cannot be empty.'))
