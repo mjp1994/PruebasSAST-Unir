@@ -518,14 +518,85 @@ $bg-hacking-instructor: rgba(0, 0, 0, 0.3);
   --mat-sys-tertiary: #fc0;
   --mat-sys-on-tertiary: #000;
 
-  // Custom font and typography
-  font-family: 'VT323', monospace;
-  --mat-sys-body-medium-font: 'VT323', monospace;
-  --mat-sys-body-large-font: 'VT323', monospace;
-  --mat-sys-display-large-font: 'VT323', monospace;
-  --mat-sys-headline-large-font: 'VT323', monospace;
-  --mat-sys-title-large-font: 'VT323', monospace;
-  --mat-sys-label-large-font: 'VT323', monospace;
+  // Custom font and typography.
+  // VT323 is a pixelated retro font that fits the neon aesthetic, so
+  // keep it on headings, buttons, menus, chips and compact controls
+  // for the CTF vibe. Readable Roboto is applied surgically only on
+  // long-form body text and on surfaces where users actually type or
+  // read paragraphs (form fields, chat bubbles). All Material
+  // typography tokens are explicit here because Angular Material wires
+  // each control directly to its own --mat-sys-*-font variable instead
+  // of inheriting from the root font-family, so missing overrides fall
+  // back to the Material default of Roboto and break the retro feel.
+  font-family: 'VT323', ui-monospace, monospace;
+
+  // Display, headline and title tokens: page-level heading text.
+  --mat-sys-display-large-font: 'VT323', ui-monospace, monospace;
+  --mat-sys-display-medium-font: 'VT323', ui-monospace, monospace;
+  --mat-sys-display-small-font: 'VT323', ui-monospace, monospace;
+  --mat-sys-headline-large-font: 'VT323', ui-monospace, monospace;
+  --mat-sys-headline-medium-font: 'VT323', ui-monospace, monospace;
+  --mat-sys-headline-small-font: 'VT323', ui-monospace, monospace;
+  --mat-sys-title-large-font: 'VT323', ui-monospace, monospace;
+  --mat-sys-title-medium-font: 'VT323', ui-monospace, monospace;
+  --mat-sys-title-small-font: 'VT323', ui-monospace, monospace;
+
+  // Label tokens: Angular Material binds these into button labels,
+  // menu items, chip labels and option text. Keeping them on VT323
+  // makes compact controls stay pixel-narrow so long German and
+  // French labels still fit on the navbar and chatbot chips on
+  // mobile viewports.
+  --mat-sys-label-large-font: 'VT323', ui-monospace, monospace;
+  --mat-sys-label-medium-font: 'VT323', ui-monospace, monospace;
+  --mat-sys-label-small-font: 'VT323', ui-monospace, monospace;
+
+  // --neon-readable-font is the system-native sans-serif stack used
+  // on long-form reading surfaces. It resolves to the OS UI font on
+  // every platform (San Francisco on macOS/iOS, Segoe UI on Windows,
+  // Roboto on Android) without depending on any bundled webfont, so
+  // the neon theme does not have to ship an extra font download.
+  --neon-readable-font: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+
+  // --neon-readable-mono is a readable monospace stack. It is used
+  // where text alignment must be preserved (chat bubbles which may
+  // contain code snippets, JSON or pasted payloads) but the pixel
+  // font would hurt readability for prose.
+  --neon-readable-mono: ui-monospace, 'SF Mono', Menlo, Consolas, 'Liberation Mono', monospace;
+
+  // Body large/medium tokens: long-form reading surfaces like
+  // paragraphs, list items, tooltips and snackbar body text. These
+  // switch to the readable stack so players can actually read
+  // challenge descriptions, privacy copy and error messages.
+  // body-small is deliberately left on the theme-root VT323 so
+  // Angular Material's form-field subscript row (hints, counters,
+  // errors) keeps its compact pixel metrics and does not clip or
+  // overflow on the dual-hint forms (review, address, password).
+  --mat-sys-body-large-font: var(--neon-readable-font);
+  --mat-sys-body-medium-font: var(--neon-readable-font);
+
+  // Native inputs and the Material input value element switch to the
+  // readable stack so users can actually read what they are typing.
+  // The full form-field wrapper is intentionally not retargeted so
+  // that labels, hints, counters and error text keep their compact
+  // VT323 metrics and the subscript row stays on the same layout
+  // the original neon theme was tuned for.
+  .mat-mdc-input-element,
+  input,
+  textarea,
+  select {
+    font-family: var(--neon-readable-font);
+  }
+
+  // Chatbot conversation bubbles are long-form custom text that only
+  // sets font-size and uses white-space: pre-wrap to preserve the
+  // exact formatting of streamed LLM output, including code snippets,
+  // JSON and pasted payloads that the player may be inspecting as
+  // part of a security challenge. A readable monospace stack keeps
+  // the alignment intact while being much easier to read than the
+  // VT323 pixel font for long messages.
+  .chat-bubble {
+    font-family: var(--neon-readable-mono);
+  }
 
   // Link customizations
   a {
@@ -603,11 +674,13 @@ $bg-hacking-instructor: rgba(0, 0, 0, 0.3);
     text-shadow: none !important;
   }
 
-  // Challenge tags
+  // Challenge tags.
+  // Border raised from #333 to #666 so the chip outline actually shows
+  // against the #222 container instead of blending into it.
   .tag {
     background-color: #222 !important;
     color: #fc0 !important;
-    border: 1px solid #333 !important;
+    border: 1px solid #666 !important;
   }
 
   .tag.tag-available-dependency {
@@ -645,9 +718,15 @@ $bg-hacking-instructor: rgba(0, 0, 0, 0.3);
   .mat-mdc-raised-button:disabled,
   .mat-mdc-unelevated-button:disabled {
     --mdc-filled-button-disabled-container-color: #111;
-    color: #444 !important;
-    border: 1px solid #444;
-    opacity: 0.7;
+    // Label and border raised from #444 (~2:1 contrast on #111, fails
+    // WCAG AA even for large text) to #888 (~5.4:1, passes AA). The
+    // previous opacity: 0.7 dim is removed because it composited the
+    // label back down to about 3:1 at render time, which failed the
+    // accessibility goal. Disabled state is still obvious from the
+    // muted grey color, the matching border and the native :disabled
+    // cursor, so the opacity dim is redundant.
+    color: #888 !important;
+    border: 1px solid #888;
   }
 
   .mat-mdc-button:hover,
