@@ -19,8 +19,31 @@ import * as utils from './utils'
 // @ts-expect-error FIXME no typescript definitions for z85 :(
 import * as z85 from 'z85'
 
-export const publicKey = fs ? fs.readFileSync('encryptionkeys/jwt.pub', 'utf8') : 'placeholder-public-key'
-const privateKey = '-----BEGIN RSA PRIVATE KEY-----\r\nMIICXAIBAAKBgQDNwqLEe9wgTXCbC7+RPdDbBbeqjdbs4kOPOIGzqLpXvJXlxxW8iMz0EaM4BKUqYsIa+ndv3NAn2RxCd5ubVdJJcX43zO6Ko0TFEZx/65gY3BE0O6syCEmUP4qbSd6exou/F+WTISzbQ5FBVPVmhnYhG/kpwt/cIxK5iUn5hm+4tQIDAQABAoGBAI+8xiPoOrA+KMnG/T4jJsG6TsHQcDHvJi7o1IKC/hnIXha0atTX5AUkRRce95qSfvKFweXdJXSQ0JMGJyfuXgU6dI0TcseFRfewXAa/ssxAC+iUVR6KUMh1PE2wXLitfeI6JLvVtrBYswm2I7CtY0q8n5AGimHWVXJPLfGV7m0BAkEA+fqFt2LXbLtyg6wZyxMA/cnmt5Nt3U2dAu77MzFJvibANUNHE4HPLZxjGNXN+a6m0K6TD4kDdh5HfUYLWWRBYQJBANK3carmulBwqzcDBjsJ0YrIONBpCAsXxk8idXb8jL9aNIg15Wumm2enqqObahDHB5jnGOLmbasizvSVqypfM9UCQCQl8xIqy+YgURXzXCN+kwUgHinrutZms87Jyi+D8Br8NY0+Nlf+zHvXAomD2W5CsEK7C+8SLBr3k/TsnRWHJuECQHFE9RA2OP8WoaLPuGCyFXaxzICThSRZYluVnWkZtxsBhW2W8z1b8PvWUE7kMy7TnkzeJS2LSnaNHoyxi7IaPQUCQCwWU4U+v4lD7uYBw00Ga/xt+7+UqFPlPVdz1yyr4q24Zxaw0LgmuEvgU5dycq8N7JxjTubX0MIRR+G9fmDBBl8=\r\n-----END RSA PRIVATE KEY-----'
+
+let publicKey: string
+if (process.env.JWT_PUBLIC_KEY_PATH) {
+  try {
+    publicKey = fs.readFileSync(process.env.JWT_PUBLIC_KEY_PATH, 'utf8')
+  } catch (err) {
+    console.error('Failed to load JWT public key from file:', err)
+    publicKey = 'placeholder-public-key'
+  }
+} else {
+  publicKey = process.env.JWT_PUBLIC_KEY || 'placeholder-public-key'
+}
+let privateKey: string
+if (process.env.JWT_PRIVATE_KEY_PATH) {
+  try {
+    privateKey = fs.readFileSync(process.env.JWT_PRIVATE_KEY_PATH, 'utf8')
+  } catch (err) {
+    console.error('Failed to load JWT private key from file:', err)
+    privateKey = ''
+  }
+} else {
+  privateKey = process.env.JWT_PRIVATE_KEY || ''
+}
+const hmacSecret = process.env.HMAC_SECRET || 'fallback-insecure-secret-do-not-use-in-prod'
+const deluxeHmacSecret = process.env.HMAC_DELUXE_SECRET || hmacSecret
 
 interface ResponseWithUser {
   status?: string
@@ -41,7 +64,7 @@ interface IAuthenticatedUsers {
 }
 
 export const hash = (data: string) => crypto.createHash('md5').update(data).digest('hex')
-export const hmac = (data: string) => crypto.createHmac('sha256', 'pa4qacea4VK9t9nGv7yZtwmj').update(data).digest('hex')
+export const hmac = (data: string) => crypto.createHmac('sha256', hmacSecret).update(data).digest('hex')
 
 export const cutOffPoisonNullByte = (str: string) => {
   const nullByte = '%00'
@@ -51,10 +74,15 @@ export const cutOffPoisonNullByte = (str: string) => {
   return str
 }
 
-export const isAuthorized = () => expressJwt(({ secret: publicKey }) as any)
+export const isAuthorized = () => expressJwt({ secret: publicKey, algorithms: ['RS256'] } as any)
 export const denyAll = () => expressJwt({ secret: '' + Math.random() } as any)
-export const authorize = (user = {}) => jwt.sign(user, privateKey, { expiresIn: '6h', algorithm: 'RS256' })
-export const verify = (token: string) => token ? (jws.verify as ((token: string, secret: string) => boolean))(token, publicKey) : false
+export const authorize = (user = {}) => {
+  if (!privateKey) {
+    throw new Error('JWT private key is not configured. Cannot sign tokens.')
+  }
+  return jwt.sign(user, privateKey, { expiresIn: '6h', algorithm: 'RS256' })
+}
+export const verify = (token: string) => token ? (jws.verify as (token: string, secret: string) => boolean)(token, publicKey) : false
 export const decode = (token: string) => { return jws.decode(token)?.payload }
 
 export const sanitizeHtml = (html: string) => sanitizeHtmlLib(html)
@@ -149,8 +177,8 @@ export const roles = {
 }
 
 export const deluxeToken = (email: string) => {
-  const hmac = crypto.createHmac('sha256', privateKey)
-  return hmac.update(email + roles.deluxe).digest('hex')
+  const hmacInstance = crypto.createHmac('sha256', deluxeHmacSecret)
+  return hmacInstance.update(email + roles.deluxe).digest('hex')
 }
 
 export const isAccounting = () => {
@@ -166,7 +194,11 @@ export const isAccounting = () => {
 
 export const isDeluxe = (req: Request) => {
   const decodedToken = verify(utils.jwtFrom(req)) && decode(utils.jwtFrom(req))
-  return decodedToken?.data?.role === roles.deluxe && decodedToken?.data?.deluxeToken && decodedToken?.data?.deluxeToken === deluxeToken(decodedToken?.data?.email)
+  return (
+      decodedToken?.data?.role === roles.deluxe &&
+      decodedToken?.data?.deluxeToken &&
+      decodedToken?.data?.deluxeToken === deluxeToken(decodedToken?.data?.email)
+  )
 }
 
 export const isCustomer = (req: Request) => {
@@ -188,7 +220,7 @@ export const appendUserId = () => {
 export const updateAuthenticatedUsers = () => (req: Request, res: Response, next: NextFunction) => {
   const token = req.cookies.token || utils.jwtFrom(req)
   if (token) {
-    jwt.verify(token, publicKey, (err: Error | null, decoded: any) => {
+    jwt.verify(token, publicKey, { algorithms: ['RS256'] }, (err: Error | null, decoded: any) => {
       if (err === null) {
         if (authenticatedUsers.get(token) === undefined) {
           authenticatedUsers.put(token, decoded)

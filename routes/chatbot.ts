@@ -19,6 +19,7 @@ import validateChatBot from '../lib/startup/validateChatBot'
 import * as security from '../lib/insecurity'
 import * as botUtils from '../lib/botUtils'
 import { challenges } from '../data/datacache'
+import sanitizeHtml from 'sanitize-html'
 
 let trainingFile = config.get<string>('application.chatBot.trainingData')
 let testCommand: string
@@ -38,8 +39,8 @@ export async function initializeChatbot () {
     }
 
     await fs.copyFile(
-      'data/static/botDefaultTrainingData.json',
-      'data/chatbot/botDefaultTrainingData.json'
+        'data/static/botDefaultTrainingData.json',
+        'data/chatbot/botDefaultTrainingData.json'
     )
 
     trainingFile = utils.extractFilename(trainingFile)
@@ -65,7 +66,7 @@ async function processQuery (user: User, req: Request, res: Response, next: Next
   if (!username) {
     res.status(200).json({
       action: 'namequery',
-      body: 'I\'m sorry I didn\'t get your name. What shall I call you?'
+      body: sanitizeHtml('I\'m sorry I didn\'t get your name. What shall I call you?')
     })
     return
   }
@@ -75,7 +76,7 @@ async function processQuery (user: User, req: Request, res: Response, next: Next
       bot.addUser(`${user.id}`, username)
       res.status(200).json({
         action: 'response',
-        body: bot.greet(`${user.id}`)
+        body: sanitizeHtml(bot.greet(`${user.id}`))
       })
     } catch (err) {
       next(new Error('Blocked illegal activity by ' + req.socket.remoteAddress))
@@ -95,7 +96,7 @@ async function processQuery (user: User, req: Request, res: Response, next: Next
   if (!req.body.query) {
     res.status(200).json({
       action: 'response',
-      body: bot.greet(`${user.id}`)
+      body: sanitizeHtml(bot.greet(`${user.id}`))
     })
     return
   }
@@ -110,7 +111,7 @@ async function processQuery (user: User, req: Request, res: Response, next: Next
       } else {
         res.status(200).json({
           action: 'response',
-          body: config.get('application.chatBot.defaultResponse')
+          body: sanitizeHtml(config.get('application.chatBot.defaultResponse'))
         })
       }
     } else {
@@ -121,13 +122,13 @@ async function processQuery (user: User, req: Request, res: Response, next: Next
       await bot.respond(testCommand, `${user.id}`)
       res.status(200).json({
         action: 'response',
-        body: config.get('application.chatBot.defaultResponse')
+        body: sanitizeHtml(config.get('application.chatBot.defaultResponse'))
       })
     } catch (err) {
       challengeUtils.solveIf(challenges.killChatbotChallenge, () => { return true })
       res.status(200).json({
         action: 'response',
-        body: `Remember to stay hydrated while I try to recover from "${utils.getErrorMessage(err)}"...`
+        body: sanitizeHtml(`Remember to stay hydrated while I try to recover from "${utils.getErrorMessage(err)}"...`)
       })
     }
   }
@@ -153,7 +154,7 @@ async function setUserName (user: User, req: Request, res: Response) {
     bot.addUser(`${updatedUser.id}`, req.body.query)
     res.status(200).json({
       action: 'response',
-      body: bot.greet(`${updatedUser.id}`),
+      body: sanitizeHtml(bot.greet(`${updatedUser.id}`)),
       token: updatedToken
     })
   } catch (err) {
@@ -167,7 +168,7 @@ export const status = function status () {
     if (bot == null) {
       res.status(200).json({
         status: false,
-        body: `${config.get<string>('application.chatBot.name')} isn't ready at the moment, please wait while I set things up`
+        body: sanitizeHtml(`${config.get<string>('application.chatBot.name')} isn't ready at the moment, please wait while I set things up`)
       })
       return
     }
@@ -175,7 +176,7 @@ export const status = function status () {
     if (!token) {
       res.status(200).json({
         status: bot.training.state,
-        body: `Hi, I can't recognize you. Sign in to talk to ${config.get<string>('application.chatBot.name')}`
+        body: sanitizeHtml(`Hi, I can't recognize you. Sign in to talk to ${config.get<string>('application.chatBot.name')}`)
       })
       return
     }
@@ -193,7 +194,7 @@ export const status = function status () {
     if (!username) {
       res.status(200).json({
         action: 'namequery',
-        body: 'I\'m sorry I didn\'t get your name. What shall I call you?'
+        body: sanitizeHtml('I\'m sorry I didn\'t get your name. What shall I call you?')
       })
       return
     }
@@ -202,7 +203,7 @@ export const status = function status () {
       bot.addUser(`${user.id}`, username)
       res.status(200).json({
         status: bot.training.state,
-        body: bot.training.state ? bot.greet(`${user.id}`) : `${config.get<string>('application.chatBot.name')} isn't ready at the moment, please wait while I set things up`
+        body: sanitizeHtml(bot.training.state ? bot.greet(`${user.id}`) : `${config.get<string>('application.chatBot.name')} isn't ready at the moment, please wait while I set things up`)
       })
     } catch (err) {
       next(new Error('Blocked illegal activity by ' + req.socket.remoteAddress))
@@ -215,7 +216,7 @@ export function process () {
     if (bot == null) {
       res.status(200).json({
         action: 'response',
-        body: `${config.get<string>('application.chatBot.name')} isn't ready at the moment, please wait while I set things up`
+        body: sanitizeHtml(`${config.get<string>('application.chatBot.name')} isn't ready at the moment, please wait while I set things up`)
       })
       return
     }

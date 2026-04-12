@@ -123,7 +123,10 @@ function loadHint (hint: ChallengeHint): HTMLElement {
   const picture = createElement('img', pictureStyles, { src: '/assets/public/images/hackingInstructor.png' })
 
   const textBox = createElement('span', { flexGrow: '2' })
-  textBox.innerHTML = snarkdown(hint.text)
+  const markdownHtml = snarkdown(hint.text)
+  const range = document.createRange()
+  const fragment = range.createContextualFragment(markdownHtml)
+  textBox.appendChild(fragment)
 
   const cancelButtonStyles = {
     textDecoration: 'none',

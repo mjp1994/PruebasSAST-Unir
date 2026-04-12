@@ -20,15 +20,36 @@ export function retrieveLoggedInUser () {
         // Parse the fields parameter into an array, splitting by comma.
         // If not provided, both these variables will be undefined.
         const fieldsParam = req.query?.fields as string | undefined
-        const requestedFields = fieldsParam ? fieldsParam.split(',').map(f => f.trim()) : []
+        const requestedFields = fieldsParam
+            ? fieldsParam.split(',').map(f => f.trim()).filter(Boolean)
+            : []
 
-        let baseUser: any = {}
+        let baseUser: Record<string, any> = {}
 
         if (requestedFields.length > 0) {
-          // When fields are specified, return only those fields
+          const allowedFields = [
+            'id',
+            'email',
+            'lastLoginIp',
+            'profileImage',
+            'username',
+            'role',
+            'deluxeToken',
+            'address',
+            'country',
+            'securityQuestion'
+          ]
+
           for (const field of requestedFields) {
-            if (user?.data[field as keyof typeof user.data] !== undefined) {
-              baseUser[field] = user?.data[field as keyof typeof user.data]
+            if (
+                allowedFields.includes(field) &&
+                field !== '__proto__' &&
+                field !== 'constructor' &&
+                field !== 'prototype'
+            ) {
+              if (field in (user?.data ?? {})) {
+                baseUser[field] = (user?.data as any)[field]
+              }
             }
           }
         } else {
@@ -54,7 +75,7 @@ export function retrieveLoggedInUser () {
     if (req.query.callback === undefined) {
       res.json(response)
     } else {
-      challengeUtils.solveIf(challenges.emailLeakChallenge, () => { return true })
+      challengeUtils.solveIf(challenges.emailLeakChallenge, () => true)
       res.jsonp(response)
     }
   }

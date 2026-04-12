@@ -5,7 +5,7 @@
 
 import jwtDecode from 'jwt-decode'
 
-let config
+let config: any
 const playbackDelays = {
   faster: 0.5,
   fast: 0.75,
@@ -44,11 +44,19 @@ export function waitForInputToHaveValue (inputSelector: string, value: string, o
         config = json.config
       }
       const propertyChain = options.replacement[1].split('.')
-      let replacementValue = config
-      for (const property of propertyChain) {
-        replacementValue = replacementValue[property]
+      let replacementValue: any = propertyChain.reduce((current: any, property: string) => {
+        if (
+          current &&
+          typeof current === 'object' &&
+          Object.prototype.hasOwnProperty.call(current, property)
+        ) {
+          return current[property]
+        }
+        return undefined
+      }, config)
+      if (replacementValue !== undefined) {
+        value = value.replace(options.replacement[0], replacementValue)
       }
-      value = value.replace(options.replacement[0], replacementValue)
     }
 
     while (true) {

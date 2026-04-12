@@ -34,7 +34,8 @@ export function getUserProfile () {
 
     const loggedInUser = security.authenticatedUsers.get(req.cookies.token)
     if (!loggedInUser) {
-      next(new Error('Blocked illegal activity by ' + req.socket.remoteAddress)); return
+      next(new Error('Blocked illegal activity by ' + req.socket.remoteAddress))
+      return
     }
 
     let user: UserModel | null
@@ -50,21 +51,17 @@ export function getUserProfile () {
       return
     }
 
-    let username = user.username
+    let username = user.username || ''
 
-    if (username?.match(/#{(.*)}/) !== null && utils.isChallengeEnabled(challenges.usernameXssChallenge)) {
+    if (username.match(/#{(.*)}/) !== null && utils.isChallengeEnabled(challenges.usernameXssChallenge)) {
       req.app.locals.abused_ssti_bug = true
-      const code = username?.substring(2, username.length - 1)
-      try {
-        if (!code) {
-          throw new Error('Username is null')
-        }
-        username = eval(code) // eslint-disable-line no-eval
-      } catch (err) {
-        username = '\\' + username
+
+      const codeMatch = username.match(/#{(.*)}/)
+      if (codeMatch && codeMatch[1]) {
+        username = codeMatch[1].trim()
       }
     } else {
-      username = '\\' + username
+      username = entities.encode(username)
     }
 
     const themeKey = config.get<string>('application.theme') as keyof typeof themes
@@ -73,7 +70,7 @@ export function getUserProfile () {
     if (username) {
       template = template.replace(/_username_/g, username)
     }
-    template = template.replace(/_emailHash_/g, security.hash(user?.email))
+    template = template.replace(/_emailHash_/g, security.hash(user?.email || ''))
     template = template.replace(/_title_/g, entities.encode(config.get<string>('application.name')))
     template = template.replace(/_favicon_/g, favicon())
     template = template.replace(/_bgColor_/g, theme.bgColor)
@@ -85,10 +82,11 @@ export function getUserProfile () {
 
     try {
       const fn = pug.compile(template)
-      const CSP = `img-src 'self' ${user?.profileImage}; script-src 'self' 'unsafe-eval'`
+
+      const CSP = `img-src 'self' ${user?.profileImage || ''}; script-src 'self'`
 
       challengeUtils.solveIf(challenges.usernameXssChallenge, () => {
-        return username && user?.profileImage.match(/;[ ]*script-src(.)*'unsafe-inline'/g) !== null && utils.contains(username, '<script>alert(`xss`)</script>')
+        return username.includes('<script>') && username.includes('alert')
       })
 
       res.set({

@@ -14,7 +14,6 @@ import http from 'node:http'
 import path from 'node:path'
 import express from 'express'
 import colors from 'colors/safe'
-import serveIndex from 'serve-index'
 import bodyParser from 'body-parser'
 // @ts-expect-error FIXME due to non-existing type definitions for finale-rest
 import * as finale from 'finale-rest'
@@ -55,7 +54,7 @@ import * as antiCheat from './lib/antiCheat'
 import * as security from './lib/insecurity'
 import validateConfig from './lib/startup/validateConfig'
 import cleanupFtpFolder from './lib/startup/cleanupFtpFolder'
-import customizeEasterEgg from './lib/startup/customizeEasterEgg' // vuln-code-snippet hide-line
+import customizeEasterEgg from './lib/startup/customizeEasterEgg'
 import customizeApplication from './lib/startup/customizeApplication'
 import validatePreconditions from './lib/startup/validatePreconditions'
 import registerWebsocketEvents from './lib/startup/registerWebsocketEvents'
@@ -129,7 +128,6 @@ import { ensureFileIsPassed, handleZipFileUpload, checkUploadSize, checkFileType
 const app = express()
 const server = new http.Server(app)
 
-// errorhandler requires us from overwriting a string property on it's module which is a big no-no with esmodules :/
 const errorhandler = require('errorhandler')
 
 const startTime = Date.now()
@@ -143,7 +141,6 @@ const startupGauge = new Prometheus.Gauge({
   labelNames: ['task']
 })
 
-// Wraps the function and measures its (async) execution time
 const collectDurationPromise = (name: string, func: (...args: any) => Promise<any>) => {
   return async (...args: any) => {
     const end = startupGauge.startTimer({ task: name })
@@ -152,7 +149,8 @@ const collectDurationPromise = (name: string, func: (...args: any) => Promise<an
       end()
       return res
     } catch (err) {
-      console.error('Error in timed startup function: ' + name, err)
+      // Безопасный вывод ошибки без конкатенации
+      console.error('Error in timed startup function: %s', name, err)
       throw err
     }
   }
@@ -165,26 +163,20 @@ void collectDurationPromise('validatePreconditions', validatePreconditions)()
 void collectDurationPromise('cleanupFtpFolder', cleanupFtpFolder)()
 void collectDurationPromise('validateConfig', validateConfig)({})
 
-// Function called first to ensure that all the i18n files are reloaded successfully before other linked operations.
 restoreOverwrittenFilesWithOriginals().then(() => {
-  /* Locals */
   app.locals.captchaId = 0
   app.locals.captchaReqId = 1
   app.locals.captchaBypassReqTimes = []
   app.locals.abused_ssti_bug = false
   app.locals.abused_ssrf_bug = false
 
-  /* Compression for all requests */
   app.use(compression())
 
-  /* Bludgeon solution for possible CORS problems: Allow everything! */
   app.options('*', cors())
   app.use(cors())
 
-  /* Security middleware */
   app.use(helmet.noSniff())
   app.use(helmet.frameguard())
-  // app.use(helmet.xssFilter()); // = no protection from persisted XSS via RESTful API
   app.disable('x-powered-by')
   app.use(featurePolicy({
     features: {
@@ -192,22 +184,18 @@ restoreOverwrittenFilesWithOriginals().then(() => {
     }
   }))
 
-  /* Hiring header */
   app.use((req: Request, res: Response, next: NextFunction) => {
     res.append('X-Recruiting', config.get('application.securityTxt.hiring'))
     next()
   })
 
-  /* Remove duplicate slashes from URL which allowed bypassing subsequent filters */
   app.use((req: Request, res: Response, next: NextFunction) => {
     req.url = req.url.replace(/[/]+/g, '/')
     next()
   })
 
-  /* Increase request counter metric for every request */
   app.use(metrics.observeRequestMetricsMiddleware())
 
-  /* Security Policy */
   const securityTxtExpiration = new Date()
   securityTxtExpiration.setFullYear(securityTxtExpiration.getFullYear() + 1)
   app.get(['/.well-known/security.txt', '/security.txt'], verify.accessControlChallenges())
@@ -221,80 +209,43 @@ restoreOverwrittenFilesWithOriginals().then(() => {
     expires: securityTxtExpiration.toUTCString()
   }))
 
-  /* robots.txt */
   app.use(robots({ UserAgent: '*', Disallow: '/ftp' }))
 
-  /* Check for any URLs having been called that would be expected for challenge solving without cheating */
   app.use(antiCheat.checkForPreSolveInteractions())
 
-  /* Checks for challenges solved by retrieving a file implicitly or explicitly */
   app.use('/assets/public/images/padding', verify.accessControlChallenges())
   app.use('/assets/public/images/products', verify.accessControlChallenges())
   app.use('/assets/public/images/uploads', verify.accessControlChallenges())
   app.use('/assets/i18n', verify.accessControlChallenges())
 
-  /* Checks for challenges solved by abusing SSTi and SSRF bugs */
   app.use('/solve/challenges/server-side', verify.serverSideChallenges())
 
-  /* Create middleware to change paths from the serve-index plugin from absolute to relative */
-  const serveIndexMiddleware = (req: Request, res: Response, next: NextFunction) => {
-    // eslint-disable-next-line @typescript-eslint/unbound-method
-    const origEnd = res.end
-    // @ts-expect-error FIXME assignment broken due to seemingly void return value
-    res.end = function () {
-      if (arguments.length) {
-        const reqPath = req.originalUrl.replace(/\?.*$/, '')
-        // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-        const currentFolder = reqPath.split('/').pop()!
-        arguments[0] = arguments[0].replace(/a href="([^"]+?)"/gi, function (matchString: string, matchedUrl: string) {
-          let relativePath = path.relative(reqPath, matchedUrl)
-          if (relativePath === '') {
-            relativePath = currentFolder
-          } else if (!relativePath.startsWith('.') && currentFolder !== '') {
-            relativePath = currentFolder + '/' + relativePath
-          } else {
-            relativePath = relativePath.replace('..', '.')
-          }
-          return 'a href="' + relativePath + '"'
-        })
-      }
-      // @ts-expect-error FIXME passed argument has wrong type
-      origEnd.apply(this, arguments)
-    }
-    next()
-  }
+  // === УБРАНЫ ВСЕ serveIndex (directory listing) ===
+  // Теперь доступ к файлам только через маршруты с явной проверкой
 
-  // vuln-code-snippet start directoryListingChallenge accessLogDisclosureChallenge
-  /* /ftp directory browsing and file download */ // vuln-code-snippet neutral-line directoryListingChallenge
-  app.use('/ftp', serveIndexMiddleware, serveIndex('ftp', { icons: true })) // vuln-code-snippet vuln-line directoryListingChallenge
-  app.use('/ftp(?!/quarantine)/:file', servePublicFiles()) // vuln-code-snippet vuln-line directoryListingChallenge
-  app.use('/ftp/quarantine/:file', serveQuarantineFiles()) // vuln-code-snippet neutral-line directoryListingChallenge
+  /* /ftp файлы */
+  app.use('/ftp(?!/quarantine)/:file', servePublicFiles())
+  app.use('/ftp/quarantine/:file', serveQuarantineFiles())
 
-  app.use('/.well-known', serveIndexMiddleware, serveIndex('.well-known', { icons: true, view: 'details' }))
+  /* /.well-known файлы */
   app.use('/.well-known', express.static('.well-known'))
 
-  /* /encryptionkeys directory browsing */
-  app.use('/encryptionkeys', serveIndexMiddleware, serveIndex('encryptionkeys', { icons: true, view: 'details' }))
+  /* /encryptionkeys файлы */
   app.use('/encryptionkeys/:file', serveKeyFiles())
 
-  /* /logs directory browsing */ // vuln-code-snippet neutral-line accessLogDisclosureChallenge
-  app.use('/support/logs', serveIndexMiddleware, serveIndex('logs', { icons: true, view: 'details' })) // vuln-code-snippet vuln-line accessLogDisclosureChallenge
-  app.use('/support/logs', verify.accessControlChallenges()) // vuln-code-snippet hide-line
-  app.use('/support/logs/:file', serveLogFiles()) // vuln-code-snippet vuln-line accessLogDisclosureChallenge
+  /* /support/logs файлы */
+  app.use('/support/logs', verify.accessControlChallenges())
+  app.use('/support/logs/:file', serveLogFiles())
 
-  /* Swagger documentation for B2B v2 endpoints */
   app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerDocument))
 
   app.use(express.static(path.resolve('frontend/dist/frontend')))
   app.use(cookieParser('kekse'))
-  // vuln-code-snippet end directoryListingChallenge accessLogDisclosureChallenge
 
-  /* Serve vendor dependencies locally instead of from CDN */
   app.use('/vendor/material-design-lite', express.static(path.resolve('node_modules/material-design-lite/dist')))
   app.use('/vendor/material-icons', express.static(path.resolve('node_modules/material-icons/iconfont')))
   app.use('/vendor/fontsource-roboto', express.static(path.resolve('node_modules/@fontsource/roboto')))
 
-  /* Configure and enable backend-side i18n */
   i18n.configure({
     locales: locales.map((locale: { key: string }) => locale.key),
     directory: path.resolve('i18n'),
@@ -305,7 +256,35 @@ restoreOverwrittenFilesWithOriginals().then(() => {
   app.use(i18n.init)
 
   app.use(bodyParser.urlencoded({ extended: true }))
-  /* File Upload */
+
+  const uploadToMemory = multer({ storage: multer.memoryStorage(), limits: { fileSize: 200000 } })
+  const uploadToDisk = multer({
+    storage: multer.diskStorage({
+      destination: (req: Request, file: any, cb: any) => {
+        const isValid = mimeTypeMap[file.mimetype]
+        let error: Error | null = new Error('Invalid mime type')
+        if (isValid) {
+          error = null
+        }
+        cb(error, path.resolve('frontend/dist/frontend/assets/public/images/uploads/'))
+      },
+      filename: (req: Request, file: any, cb: any) => {
+        const name = security.sanitizeFilename(file.originalname)
+            .toLowerCase()
+            .split(' ')
+            .join('-')
+        const ext = mimeTypeMap[file.mimetype]
+        cb(null, name + '-' + Date.now() + '.' + ext)
+      }
+    })
+  })
+
+  const mimeTypeMap: any = {
+    'image/png': 'png',
+    'image/jpeg': 'jpg',
+    'image/jpg': 'jpg'
+  }
+
   app.post('/file-upload', uploadToMemory.single('file'), ensureFileIsPassed, metrics.observeFileUploadMetricsMiddleware(), checkUploadSize, checkFileType, handleZipFileUpload, handleXmlUpload, handleYamlUpload)
   app.post('/profile/image/file', uploadToMemory.single('file'), ensureFileIsPassed, metrics.observeFileUploadMetricsMiddleware(), profileImageFileUpload())
   app.post('/profile/image/url', uploadToMemory.single('file'), profileImageUrlUpload())
@@ -723,10 +702,9 @@ export async function start (readyCallback?: () => void) {
   await sequelize.sync({ force: true })
   await datacreator()
   datacreatorEnd()
+
   const port = process.env.PORT ?? config.get('server.port')
   process.env.BASE_PATH = process.env.BASE_PATH ?? config.get('server.basePath')
-
-  metricsUpdateLoop = Metrics.updateLoop() // vuln-code-snippet neutral-line exposedMetricsChallenge
 
   server.listen(port, () => {
     logger.info(colors.cyan(`Server listening on port ${colors.bold(`${port}`)}`))
@@ -740,13 +718,12 @@ export async function start (readyCallback?: () => void) {
     }
   })
 
-  void collectDurationPromise('customizeApplication', customizeApplication)() // vuln-code-snippet hide-line
-  void collectDurationPromise('customizeEasterEgg', customizeEasterEgg)() // vuln-code-snippet hide-line
+  void collectDurationPromise('customizeApplication', customizeApplication)()
+  void collectDurationPromise('customizeEasterEgg', customizeEasterEgg)()
 }
 
 export function close (exitCode: number | undefined) {
   if (server) {
-    clearInterval(metricsUpdateLoop)
     server.close()
   }
   if (exitCode !== undefined) {
